@@ -28,7 +28,6 @@ class MainViewController: UIViewController {
         title = "News app"
         
         searchController.searchBar.delegate = self
-        searchController.searchResultsUpdater = self
         presenter.delegate = self
         initNavBar()
         initTableView()
@@ -70,7 +69,6 @@ class MainViewController: UIViewController {
             }, completion: nil)
         }
         let index = sender.tag
-        print(Thread.current)
         let article = presenter.getArticle(at: index)
         presenter.addArticle(article.toArticleSave())
     }
@@ -133,16 +131,6 @@ class MainViewController: UIViewController {
         }
         refreshControl.addTarget(self, action: #selector(getArticles(_:)), for: .valueChanged)
     }
-}
-
-// MARK: - Search Results Updating
-
-extension MainViewController: UISearchResultsUpdating {
-    
-    func updateSearchResults(for searchController: UISearchController) {
-        guard let text = searchController.searchBar.text else{ return }
-        print(text)
-    }
     
 }
 
@@ -153,7 +141,6 @@ extension MainViewController: UISearchBarDelegate {
     func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
         if let text = searchBar.text {
             lastSearchedWord = text
-            print(Thread.current)
             presenter.getNews(at: text)
         }
     }
@@ -201,6 +188,12 @@ extension MainViewController: UITableViewDataSource, UITableViewDelegate {
         guard let url = URL(string: article.url) else { return }
         let webVC = WebViewController(url: url, title: article.title)
         navigationController?.pushViewController(webVC, animated: true)
+    }
+    
+    func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
+        if indexPath.row == presenter.getCount() - 1 {
+            presenter.appendElements()
+        }
     }
     
 }

@@ -16,6 +16,11 @@ class ArticlesViewPresenter {
         self.dbManager = dbManager
     }
     
+    func deleteArticle(at indexPath: IndexPath) {
+        dbManager.deleteArticle(at: indexPath)
+        delegate?.updateTableView()
+    }
+    
     func loadArticles() {
         dbManager.loadArticles()
         delegate?.updateTableView()

@@ -84,11 +84,16 @@ extension ArticlesViewController: UITableViewDelegate, UITableViewDataSource {
         }
         cell.favouriteButton.addTarget(self, action: #selector(addArticleToFavourite), for: .touchUpInside)
         cell.favouriteButton.tag = indexPath.row
+        cell.favouriteButton.isHidden = true
         return cell
     }
     
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
+    }
+    
+    func tableView(_ tableView: UITableView, commit editingStyle: UITableViewCell.EditingStyle, forRowAt indexPath: IndexPath) {
+        presenter.deleteArticle(at: indexPath)
     }
     
 }

@@ -13,6 +13,8 @@ class MainViewPresenter {
     private let answerManager: AnswerManager
     private let dbManager: DBManager
     private var sortState = 0
+    private var articlesToDisplay = [Article]()
+    private let total = 15
     
     var delegate: UpdatingDelegate?
     
@@ -26,28 +28,42 @@ class MainViewPresenter {
             guard let news = news else { return }
             self.articles.removeAll()
             self.articles = news.articles
+            self.articlesToDisplay.removeAll()
+            self.appendElements()
             self.delegate?.updateTableView()
         }
     }
     
+    func appendElements() {
+        let count = articlesToDisplay.count
+        let countArticles = articles.count
+        var index = 0
+        while index < total {
+            if count + index < countArticles {
+                articlesToDisplay.append(articles[count + index])
+            }
+            index += 1
+        }
+    }
+    
     func getCount() -> Int {
-        return articles.count
+        return articlesToDisplay.count
     }
     
     func getArticle(at indexPath: IndexPath) -> Article {
-        return articles[indexPath.row]
+        return articlesToDisplay[indexPath.row]
     }
     
     func getArticle(at index: Int) -> Article {
-        return articles[index]
+        return articlesToDisplay[index]
     }
     
     func sortArticles() {
         if sortState & 1 == 1 {
-            articles = articles.sorted(by: { $0.publishedAt > $1.publishedAt })
+            articlesToDisplay = articlesToDisplay.sorted(by: { $0.publishedAt > $1.publishedAt })
             sortState += 1
         } else {
-            articles = articles.sorted(by: { $0.publishedAt < $1.publishedAt })
+            articlesToDisplay = articlesToDisplay.sorted(by: { $0.publishedAt < $1.publishedAt })
             sortState += 1
         }
         delegate?.updateTableView()

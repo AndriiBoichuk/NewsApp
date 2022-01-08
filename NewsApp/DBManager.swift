@@ -21,14 +21,10 @@ class DBManager {
         } catch {
             print(error)
         }
-        print("saved")
-//        tableView.reloadData()
     }
     
     func loadArticles() {
         articles = realm.objects(ArticleSave.self)
-        print("Loaded")
-        // tableView.reloadData()
     }
     
     func deleteArticle(article: ArticleSave) {
@@ -39,8 +35,18 @@ class DBManager {
         } catch {
             print(error)
         }
-        
-        // tableView.reloadData
+    }
+    
+    func deleteArticle(at indexPath: IndexPath) {
+        do {
+            if let articleForDeletion = articles?[indexPath.row] {
+                try realm.write {
+                    realm.delete(articleForDeletion)
+                }
+            }
+        } catch {
+            print(error)
+        }
     }
     
     func getCount() -> Int {
