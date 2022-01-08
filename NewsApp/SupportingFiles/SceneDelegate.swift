@@ -18,7 +18,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         window = UIWindow(frame: windowScene.coordinateSpace.bounds)
         window?.windowScene = windowScene
         let answerManager = AnswerManager()
-        let presenter = MainViewPresenter(answerManager)
+        let dbManager = DBManager()
+        let presenter = MainViewPresenter(answerManager, dbManager)
         let navigationVC = UINavigationController(rootViewController: MainViewController(presenter: presenter))
         window?.rootViewController = navigationVC
         window?.makeKeyAndVisible()

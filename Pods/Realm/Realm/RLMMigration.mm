@@ -19,18 +19,21 @@
 #import "RLMMigration_Private.h"
 
 #import "RLMAccessor.h"
-#import "RLMObject.h"
+#import "RLMObject_Private.h"
+#import "RLMObject_Private.hpp"
 #import "RLMObjectSchema_Private.hpp"
 #import "RLMObjectStore.h"
 #import "RLMProperty_Private.h"
 #import "RLMRealm_Dynamic.h"
 #import "RLMRealm_Private.hpp"
-#import "RLMResults_Private.h"
+#import "RLMResults_Private.hpp"
 #import "RLMSchema_Private.hpp"
+#import "RLMUtil.hpp"
 
-#import "object_store.hpp"
-#import "shared_realm.hpp"
-#import "schema.hpp"
+#import <realm/object-store/object_store.hpp>
+#import <realm/object-store/shared_realm.hpp>
+#import <realm/object-store/schema.hpp>
+#import <realm/table.hpp>
 
 using namespace realm;
 
@@ -50,14 +53,16 @@ using namespace realm;
 }
 @end
 
-@implementation RLMMigration
+@implementation RLMMigration {
+    realm::Schema *_schema;
+}
 
-- (instancetype)initWithRealm:(RLMRealm *)realm oldRealm:(RLMRealm *)oldRealm {
+- (instancetype)initWithRealm:(RLMRealm *)realm oldRealm:(RLMRealm *)oldRealm schema:(realm::Schema &)schema {
     self = [super init];
     if (self) {
-        // create rw realm to migrate with current on disk table
         _realm = realm;
         _oldRealm = oldRealm;
+        _schema = &schema;
         object_setClass(_oldRealm, RLMMigrationRealm.class);
     }
     return self;
@@ -71,44 +76,65 @@ using namespace realm;
     return self.realm.schema;
 }
 
-- (void)enumerateObjects:(NSString *)className block:(RLMObjectMigrationBlock)block {
-    // get all objects
+- (void)enumerateObjects:(NSString *)className block:(__attribute__((noescape)) RLMObjectMigrationBlock)block {
     RLMResults *objects = [_realm.schema schemaForClassName:className] ? [_realm allObjects:className] : nil;
     RLMResults *oldObjects = [_oldRealm.schema schemaForClassName:className] ? [_oldRealm allObjects:className] : nil;
 
-    if (objects && oldObjects) {
-        for (long i = oldObjects.count - 1; i >= 0; i--) {
+    // For whatever reason if this is a newly added table we enumerate the
+    // objects in it, while in all other cases we enumerate only the existing
+    // objects. It's unclear how this could be useful, but changing it would
+    // also be a pointless breaking change and it's unlikely to be hurting anyone.
+    if (objects && !oldObjects) {
+        for (RLMObject *object in objects) {
             @autoreleasepool {
-                block(oldObjects[i], objects[i]);
+                block(nil, object);
             }
         }
+        return;
     }
-    else if (objects) {
-        for (long i = objects.count - 1; i >= 0; i--) {
+    
+    // If a table will be deleted it can still be enumerated during the migration
+    // so that data can be saved or transfered to other tables if necessary.
+    if (!objects && oldObjects) {
+        for (RLMObject *oldObject in oldObjects) {
             @autoreleasepool {
-                block(nil, objects[i]);
+                block(oldObject, nil);
             }
         }
+        return;
     }
-    else if (oldObjects) {
-        for (long i = oldObjects.count - 1; i >= 0; i--) {
-            @autoreleasepool {
-                block(oldObjects[i], nil);
+    
+    if (oldObjects.count == 0 || objects.count == 0) {
+        return;
+    }
+
+    auto& info = _realm->_info[className];
+    for (RLMObject *oldObject in oldObjects) {
+        @autoreleasepool {
+            Obj newObj;
+            try {
+                newObj = info.table()->get_object(oldObject->_row.get_key());
             }
+            catch (KeyNotFound const&) {
+                continue;
+            }
+            block(oldObject, (id)RLMCreateObjectAccessor(info, std::move(newObj)));
         }
     }
 }
 
 - (void)execute:(RLMMigrationBlock)block {
     @autoreleasepool {
-        // disable all primary keys for migration
+        // disable all primary keys for migration and use DynamicObject for all types
         for (RLMObjectSchema *objectSchema in _realm.schema.objectSchema) {
+            objectSchema.accessorClass = RLMDynamicObject.class;
             objectSchema.primaryKeyProperty.isPrimary = NO;
         }
+        for (RLMObjectSchema *objectSchema in _oldRealm.schema.objectSchema) {
+            objectSchema.accessorClass = RLMDynamicObject.class;
+        }
 
-        // apply block and set new schema version
-        uint64_t oldVersion = _oldRealm->_realm->config().schema_version;
-        block(self, oldVersion);
+        block(self, _oldRealm->_realm->schema_version());
 
         _oldRealm = nil;
         _realm = nil;
@@ -136,29 +162,19 @@ using namespace realm;
     if (!table) {
         return false;
     }
-
     if ([_realm.schema schemaForClassName:name]) {
         table->clear();
     }
     else {
-        realm::ObjectStore::delete_data_for_object(_realm.group, name.UTF8String);
+        _realm.group.remove_table(table->get_key());
     }
 
     return true;
 }
 
 - (void)renamePropertyForClass:(NSString *)className oldName:(NSString *)oldName newName:(NSString *)newName {
-    realm::ObjectStore::rename_property(_realm.group, *_realm->_realm->config().schema, className.UTF8String, oldName.UTF8String, newName.UTF8String);
-    ObjectSchema objectStoreSchema(_realm.group, className.UTF8String);
-    RLMObjectSchema *objectSchema = [RLMObjectSchema objectSchemaForObjectStoreSchema:objectStoreSchema];
-    NSMutableArray *mutableObjectSchemas = [NSMutableArray arrayWithArray:_realm.schema.objectSchema];
-    [mutableObjectSchemas replaceObjectAtIndex:[mutableObjectSchemas indexOfObject:_realm.schema[className]]
-                                    withObject:objectSchema];
-    objectSchema.realm = _realm;
-    _realm.schema.objectSchema = [mutableObjectSchemas copy];
-    for (RLMProperty *property in objectSchema.properties) {
-        property.column = objectStoreSchema.property_for_name(property.name.UTF8String)->table_column;
-    }
+    realm::ObjectStore::rename_property(_realm.group, *_schema, className.UTF8String,
+                                        oldName.UTF8String, newName.UTF8String);
 }
 
 @end

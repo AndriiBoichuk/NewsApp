@@ -18,7 +18,8 @@
 		7B70395E278711FB002520FF /* News.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B70395D278711FB002520FF /* News.swift */; };
 		7B703960278712F5002520FF /* AnswerManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B70395F278712F5002520FF /* AnswerManager.swift */; };
 		7B703962278720F6002520FF /* MainViewPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B703961278720F6002520FF /* MainViewPresenter.swift */; };
-		7B70396427872FA9002520FF /* MainVCDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B70396327872FA9002520FF /* MainVCDelegate.swift */; };
+		7B70396427872FA9002520FF /* UpdatingDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B70396327872FA9002520FF /* UpdatingDelegate.swift */; };
+		7B7B6128278895EA00AD0B7C /* ArticlesViewPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B7B6127278895EA00AD0B7C /* ArticlesViewPresenter.swift */; };
 		7BA7BA422787400A000DA1A9 /* WebViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BA7BA412787400A000DA1A9 /* WebViewController.swift */; };
 		7BA7BA4427886B0C000DA1A9 /* ArticlesViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BA7BA4327886B0C000DA1A9 /* ArticlesViewController.swift */; };
 		7BA7BA4627886DE6000DA1A9 /* DBManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BA7BA4527886DE6000DA1A9 /* DBManager.swift */; };
@@ -41,7 +42,8 @@
 		7B70395D278711FB002520FF /* News.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = News.swift; sourceTree = "<group>"; };
 		7B70395F278712F5002520FF /* AnswerManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnswerManager.swift; sourceTree = "<group>"; };
 		7B703961278720F6002520FF /* MainViewPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainViewPresenter.swift; sourceTree = "<group>"; };
-		7B70396327872FA9002520FF /* MainVCDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainVCDelegate.swift; sourceTree = "<group>"; };
+		7B70396327872FA9002520FF /* UpdatingDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdatingDelegate.swift; sourceTree = "<group>"; };
+		7B7B6127278895EA00AD0B7C /* ArticlesViewPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArticlesViewPresenter.swift; sourceTree = "<group>"; };
 		7BA7BA412787400A000DA1A9 /* WebViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewController.swift; sourceTree = "<group>"; };
 		7BA7BA4327886B0C000DA1A9 /* ArticlesViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArticlesViewController.swift; sourceTree = "<group>"; };
 		7BA7BA4527886DE6000DA1A9 /* DBManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DBManager.swift; sourceTree = "<group>"; };
@@ -101,7 +103,7 @@
 				7B0A5CCE27861BDC00B42405 /* Info.plist */,
 				7B70395A27870E58002520FF /* CustomCellDelegate.swift */,
 				7B70395F278712F5002520FF /* AnswerManager.swift */,
-				7B70396327872FA9002520FF /* MainVCDelegate.swift */,
+				7B70396327872FA9002520FF /* UpdatingDelegate.swift */,
 				7BA7BA4527886DE6000DA1A9 /* DBManager.swift */,
 			);
 			path = NewsApp;
@@ -111,6 +113,7 @@
 			isa = PBXGroup;
 			children = (
 				7B703961278720F6002520FF /* MainViewPresenter.swift */,
+				7B7B6127278895EA00AD0B7C /* ArticlesViewPresenter.swift */,
 			);
 			path = Presenter;
 			sourceTree = "<group>";
@@ -274,11 +277,12 @@
 				7B703962278720F6002520FF /* MainViewPresenter.swift in Sources */,
 				7BA7BA422787400A000DA1A9 /* WebViewController.swift in Sources */,
 				7B0A5CC527861BDA00B42405 /* MainViewController.swift in Sources */,
+				7B7B6128278895EA00AD0B7C /* ArticlesViewPresenter.swift in Sources */,
 				7B0A5CC127861BDA00B42405 /* AppDelegate.swift in Sources */,
 				7BA7BA4627886DE6000DA1A9 /* DBManager.swift in Sources */,
 				7B0A5CDA2786EA3600B42405 /* CustomTableViewCell.swift in Sources */,
 				7B703960278712F5002520FF /* AnswerManager.swift in Sources */,
-				7B70396427872FA9002520FF /* MainVCDelegate.swift in Sources */,
+				7B70396427872FA9002520FF /* UpdatingDelegate.swift in Sources */,
 				7BA7BA4827886E91000DA1A9 /* ArticleSave.swift in Sources */,
 				7B0A5CC327861BDA00B42405 /* SceneDelegate.swift in Sources */,
 			);

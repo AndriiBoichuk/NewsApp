@@ -16,36 +16,43 @@
 //
 ////////////////////////////////////////////////////////////////////////////
 
-#import <Foundation/Foundation.h>
 #import <Realm/RLMConstants.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
 /// :nodoc:
-@protocol RLMInt
-@end
-
+@protocol RLMInt @end
 /// :nodoc:
-@protocol RLMBool
-@end
-
+@protocol RLMBool @end
 /// :nodoc:
-@protocol RLMDouble
-@end
-
+@protocol RLMDouble @end
 /// :nodoc:
-@protocol RLMFloat
-@end
+@protocol RLMFloat @end
+/// :nodoc:
+@protocol RLMString @end
+/// :nodoc:
+@protocol RLMDate @end
+/// :nodoc:
+@protocol RLMData @end
+/// :nodoc:
+@protocol RLMDecimal128 @end
+/// :nodoc:
+@protocol RLMObjectId @end
+/// :nodoc:
+@protocol RLMUUID @end
 
 /// :nodoc:
 @interface NSNumber ()<RLMInt, RLMBool, RLMDouble, RLMFloat>
 @end
 
 /**
- `RLMProperty` instances represent properties persisted to Realm in the context of an object schema.
- 
- When using Realm, `RLMProperty` instances allow performing migrations and introspecting the database's schema.
- 
+ `RLMProperty` instances represent properties managed by a Realm in the context
+ of an object schema. Such properties may be persisted to a Realm file or
+ computed from other data from the Realm.
+
+ When using Realm, `RLMProperty` instances allow performing migrations and
+ introspecting the database's schema.
+
  These property instances map to columns in the core database.
  */
 @interface RLMProperty : NSObject
@@ -59,20 +66,20 @@ NS_ASSUME_NONNULL_BEGIN
 
 /**
  The type of the property.
- 
+
  @see `RLMPropertyType`
  */
 @property (nonatomic, readonly) RLMPropertyType type;
 
 /**
  Indicates whether this property is indexed.
- 
+
  @see `RLMObject`
  */
 @property (nonatomic, readonly) BOOL indexed;
 
 /**
- For `RLMObject` and `RLMArray` properties, the name of the class of object stored in the property.
+ For `RLMObject` and `RLMCollection` properties, the name of the class of object stored in the property.
  */
 @property (nonatomic, readonly, copy, nullable) NSString *objectClassName;
 
@@ -86,10 +93,30 @@ NS_ASSUME_NONNULL_BEGIN
  */
 @property (nonatomic, readonly) BOOL optional;
 
+/**
+ Indicates whether this property is an array.
+ */
+@property (nonatomic, readonly) BOOL array;
+
+/**
+ Indicates whether this property is a set.
+ */
+@property (nonatomic, readonly) BOOL set;
+
+/**
+ Indicates whether this property is a dictionary.
+ */
+@property (nonatomic, readonly) BOOL dictionary;
+
+/**
+ Indicates whether this property is an array or set.
+ */
+@property (nonatomic, readonly) BOOL collection;
+
 #pragma mark - Methods
 
 /**
- Returns a Boolean value that indicates whether a given property object is equal to the receiver.
+ Returns whether a given property object is equal to the receiver.
  */
 - (BOOL)isEqualToProperty:(RLMProperty *)property;
 

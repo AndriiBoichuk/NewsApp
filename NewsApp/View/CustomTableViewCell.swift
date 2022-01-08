@@ -16,8 +16,6 @@ class CustomTableViewCell: UITableViewCell {
     @IBOutlet weak var descriptionLabel: UILabel!
     @IBOutlet weak var favouriteButton: UIButton!
     
-    var delegate: CustomCellDelegate?
-    
     override func awakeFromNib() {
         super.awakeFromNib()
         

@@ -8,6 +8,6 @@ target 'NewsApp' do
   # Pods for NewsApp
   pod 'SnapKit', '~> 5.0.0'
   pod 'Alamofire', '~> 5.5'
-  pod 'RealmSwift', '~> 0.98'
+  pod 'RealmSwift', '~>10'
   
 end

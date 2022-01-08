@@ -19,7 +19,15 @@
 import Realm
 
 /// A protocol describing types that can parameterize a `RealmOptional`.
-public protocol RealmOptionalType {}
+public protocol RealmOptionalType {
+}
+
+public extension RealmOptionalType {
+    /// :nodoc:
+    static func className() -> String {
+        return ""
+    }
+}
 extension Int: RealmOptionalType {}
 extension Int8: RealmOptionalType {}
 extension Int16: RealmOptionalType {}
@@ -29,50 +37,21 @@ extension Float: RealmOptionalType {}
 extension Double: RealmOptionalType {}
 extension Bool: RealmOptionalType {}
 
-// Not all RealmOptionalType's can be cast to AnyObject, so handle casting logic here.
-private func realmOptionalToAnyObject<T: RealmOptionalType>(value: T?) -> AnyObject? {
-    if let anyObjectValue: AnyObject = value as? AnyObject {
-        return anyObjectValue
-    } else if let int8Value = value as? Int8 {
-        return NSNumber(long: Int(int8Value))
-    } else if let int16Value = value as? Int16 {
-        return NSNumber(long: Int(int16Value))
-    } else if let int32Value = value as? Int32 {
-        return NSNumber(long: Int(int32Value))
-    } else if let int64Value = value as? Int64 {
-        return NSNumber(longLong: int64Value)
-    }
-    return nil
-}
-
-// Not all RealmOptionalType's can be cast from AnyObject, so handle casting logic here.
-private func anyObjectToRealmOptional<T: RealmOptionalType>(anyObject: AnyObject?) -> T? {
-    if T.self is Int8.Type {
-        return ((anyObject as! NSNumber?)?.longValue).map { Int8($0) } as! T?
-    } else if T.self is Int16.Type {
-        return ((anyObject as! NSNumber?)?.longValue).map { Int16($0) } as! T?
-    } else if T.self is Int32.Type {
-        return ((anyObject as! NSNumber?)?.longValue).map { Int32($0) } as! T?
-    } else if T.self is Int64.Type {
-        return (anyObject as! NSNumber?)?.longLongValue as! T?
-    }
-    return anyObject as! T?
-}
-
 /**
- A `RealmOptional` instance represents a optional value for types that can't be directly declared as `dynamic` in Swift,
- such as `Int`, `Float`, `Double`, and `Bool`.
+ A `RealmOptional` instance represents an optional value for types that can't be
+ directly declared as `@objc` in Swift, such as `Int`, `Float`, `Double`, and `Bool`.
 
  To change the underlying value stored by a `RealmOptional` instance, mutate the instance's `value` property.
-*/
-public final class RealmOptional<T: RealmOptionalType>: RLMOptionalBase {
-    /// The value this optional represents.
-    public var value: T? {
+ */
+@available(*, deprecated, renamed: "RealmProperty", message: "RealmOptional<T> has been deprecated, use RealmProperty<T?> instead.")
+public final class RealmOptional<Value: RealmOptionalType>: RLMSwiftValueStorage {
+    /// The value the optional represents.
+    public var value: Value? {
         get {
-            return anyObjectToRealmOptional(underlyingValue)
+            return RLMGetSwiftValueStorage(self).map(dynamicBridgeCast)
         }
         set {
-            underlyingValue = realmOptionalToAnyObject(newValue)
+            RLMSetSwiftValueStorage(self, newValue.map(dynamicBridgeCast))
         }
     }
 
@@ -81,8 +60,40 @@ public final class RealmOptional<T: RealmOptionalType>: RLMOptionalBase {
 
      - parameter value: The value to store in the optional, or `nil` if not specified.
      */
-    public init(_ value: T? = nil) {
+    public init(_ value: Value? = nil) {
         super.init()
         self.value = value
+    }
+}
+
+@available(*, deprecated, message: "RealmOptional has been deprecated, use RealmProperty<T?> instead.")
+extension RealmOptional: Equatable where Value: Equatable {
+    public static func == (lhs: RealmOptional<Value>, rhs: RealmOptional<Value>) -> Bool {
+        return lhs.value == rhs.value
+    }
+}
+
+@available(*, deprecated, message: "RealmOptional has been deprecated, use RealmProperty<T?> instead.")
+extension RealmOptional: Codable where Value: Codable, Value: _RealmSchemaDiscoverable {
+    public convenience init(from decoder: Decoder) throws {
+        self.init()
+        // `try decoder.singleValueContainer().decode(Value?.self)` incorrectly
+        // rejects null values: https://bugs.swift.org/browse/SR-7404
+        self.value = try decoder.decodeOptional(Value?.self)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try self.value.encode(to: encoder)
+    }
+}
+
+internal protocol RealmOptionalProtocol { }
+@available(*, deprecated, message: "RealmOptional has been deprecated, use RealmProperty<T?> instead.")
+extension RealmOptional: RealmOptionalProtocol { }
+
+internal extension Decoder {
+    func decodeOptional<T: _RealmSchemaDiscoverable>(_ type: T.Type) throws -> T where T: Decodable {
+        let container = try singleValueContainer()
+        return container.decodeNil() ? T._nilValue() : try container.decode(T.self)
     }
 }

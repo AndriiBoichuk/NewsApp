@@ -18,16 +18,27 @@
 
 #import <Realm/RLMRealm.h>
 
-@class RLMFastEnumerator;
+@class RLMFastEnumerator, RLMSyncSubscription;
+
+NS_ASSUME_NONNULL_BEGIN
 
 // Disable syncing files to disk. Cannot be re-enabled. Use only for tests.
-FOUNDATION_EXTERN void RLMDisableSyncToDisk();
+FOUNDATION_EXTERN void RLMDisableSyncToDisk(void);
+// Set whether the skip backup attribute should be set on temporary files.
+FOUNDATION_EXTERN void RLMSetSkipBackupAttribute(bool value);
 
-FOUNDATION_EXTERN NSData *RLMRealmValidatedEncryptionKey(NSData *key);
+FOUNDATION_EXTERN NSData * _Nullable RLMRealmValidatedEncryptionKey(NSData *key);
 
-// Translate an in-flight exception resulting from opening a SharedGroup to
+// Set the queue used for async open. For testing purposes only.
+FOUNDATION_EXTERN void RLMSetAsyncOpenQueue(dispatch_queue_t queue);
+
+// Translate an in-flight exception resulting from an operation on a SharedGroup to
 // an NSError or NSException (if error is nil)
 void RLMRealmTranslateException(NSError **error);
+
+// Block until the Realm at the given path is closed.
+FOUNDATION_EXTERN void RLMWaitForRealmToClose(NSString *path);
+BOOL RLMIsRealmCachedAtPath(NSString *path);
 
 // RLMRealm private members
 @interface RLMRealm ()
@@ -41,10 +52,14 @@ void RLMRealmTranslateException(NSError **error);
 - (void)unregisterEnumerator:(RLMFastEnumerator *)enumerator;
 - (void)detachAllEnumerators;
 
-- (void)sendNotifications:(NSString *)notification;
+- (void)sendNotifications:(RLMNotification)notification;
 - (void)verifyThread;
-- (void)verifyNotificationsAreSupported;
+- (void)verifyNotificationsAreSupported:(bool)isCollection;
 
-+ (NSString *)writeableTemporaryPathForFile:(NSString *)fileName;
+- (RLMRealm *)frozenCopy NS_RETURNS_RETAINED;
++ (RLMAsyncOpenTask *)asyncOpenWithConfiguration:(RLMRealmConfiguration *)configuration
+                                        callback:(void (^)(NSError * _Nullable))callback;
 
 @end
+
+NS_ASSUME_NONNULL_END

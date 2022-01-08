@@ -10,13 +10,15 @@ import Foundation
 class MainViewPresenter {
     
     private var articles = [Article]()
-    private var answerManager: AnswerManager
+    private let answerManager: AnswerManager
+    private let dbManager: DBManager
     private var sortState = 0
     
-    var delegate: MainVCDelegate?
+    var delegate: UpdatingDelegate?
     
-    init(_ answerManager: AnswerManager) {
+    init(_ answerManager: AnswerManager, _ dbManager: DBManager) {
         self.answerManager = answerManager
+        self.dbManager = dbManager
     }
     
     func getNews(at word: String) {
@@ -36,6 +38,10 @@ class MainViewPresenter {
         return articles[indexPath.row]
     }
     
+    func getArticle(at index: Int) -> Article {
+        return articles[index]
+    }
+    
     func sortArticles() {
         if sortState & 1 == 1 {
             articles = articles.sorted(by: { $0.publishedAt > $1.publishedAt })
@@ -45,6 +51,14 @@ class MainViewPresenter {
             sortState += 1
         }
         delegate?.updateTableView()
+    }
+    
+    func addArticle(_ article: ArticleSave) {
+        dbManager.save(article: article)
+    }
+    
+    func getDBManager() -> DBManager {
+        return dbManager
     }
     
 }

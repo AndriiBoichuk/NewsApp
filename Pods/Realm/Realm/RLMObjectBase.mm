@@ -17,28 +17,47 @@
 ////////////////////////////////////////////////////////////////////////////
 
 #import "RLMObject_Private.hpp"
+#import "RLMObjectBase_Private.h"
 
 #import "RLMAccessor.h"
 #import "RLMArray_Private.hpp"
-#import "RLMListBase.h"
+#import "RLMDecimal128.h"
 #import "RLMObjectSchema_Private.hpp"
 #import "RLMObjectStore.h"
 #import "RLMObservation.hpp"
-#import "RLMOptionalBase.h"
 #import "RLMProperty_Private.h"
 #import "RLMRealm_Private.hpp"
 #import "RLMSchema_Private.h"
+#import "RLMSet_Private.hpp"
+#import "RLMSwiftCollectionBase.h"
 #import "RLMSwiftSupport.h"
+#import "RLMThreadSafeReference_Private.hpp"
 #import "RLMUtil.hpp"
+
+#import <realm/object-store/object.hpp>
+#import <realm/object-store/object_schema.hpp>
+#import <realm/object-store/shared_realm.hpp>
 
 using namespace realm;
 
 const NSUInteger RLMDescriptionMaxDepth = 5;
 
-static bool RLMInitializedObjectSchema(RLMObjectBase *obj) {
-    obj->_objectSchema = [obj.class sharedSchema];
+
+static bool isManagedAccessorClass(Class cls) {
+    const char *className = class_getName(cls);
+    const char accessorClassPrefix[] = "RLM:Managed";
+    return strncmp(className, accessorClassPrefix, sizeof(accessorClassPrefix) - 1) == 0;
+}
+
+static void maybeInitObjectSchemaForUnmanaged(RLMObjectBase *obj) {
+    Class cls = obj.class;
+    if (isManagedAccessorClass(cls)) {
+        return;
+    }
+
+    obj->_objectSchema = [cls sharedSchema];
     if (!obj->_objectSchema) {
-        return false;
+        return;
     }
 
     // set default values
@@ -50,16 +69,17 @@ static bool RLMInitializedObjectSchema(RLMObjectBase *obj) {
     }
 
     // set unmanaged accessor class
-    object_setClass(obj, obj->_objectSchema.standaloneClass);
-    return true;
+    object_setClass(obj, obj->_objectSchema.unmanagedClass);
 }
 
+@interface RLMObjectBase () <RLMThreadConfined, RLMThreadConfined_Private>
+@end
+
 @implementation RLMObjectBase
-// unmanaged init
+
 - (instancetype)init {
-    self = [super init];
-    if (self) {
-        RLMInitializedObjectSchema(self);
+    if ((self = [super init])) {
+        maybeInitObjectSchemaForUnmanaged(self);
     }
     return self;
 }
@@ -72,82 +92,95 @@ static bool RLMInitializedObjectSchema(RLMObjectBase *obj) {
     _observationInfo = nullptr;
 }
 
-static id RLMValidatedObjectForProperty(id obj, RLMProperty *prop, RLMSchema *schema) {
-    if (RLMIsObjectValidForProperty(obj, prop)) {
+static id coerceToObjectType(id obj, Class cls, RLMSchema *schema) {
+    if ([obj isKindOfClass:cls]) {
         return obj;
     }
-
-    // check for object or array of properties
-    if (prop.type == RLMPropertyTypeObject) {
-        // for object create and try to initialize with obj
-        RLMObjectSchema *objSchema = schema[prop.objectClassName];
-        return [[objSchema.objectClass alloc] initWithValue:obj schema:schema];
-    }
-    else if (prop.type == RLMPropertyTypeArray && [obj conformsToProtocol:@protocol(NSFastEnumeration)]) {
-        // for arrays, create objects for each element and return new array
-        RLMObjectSchema *objSchema = schema[prop.objectClassName];
-        RLMArray *objects = [[RLMArray alloc] initWithObjectClassName:objSchema.className];
-        for (id el in obj) {
-            [objects addObject:[[objSchema.objectClass alloc] initWithValue:el schema:schema]];
-        }
-        return objects;
-    }
-
-    // if not convertible to prop throw
-    @throw RLMException(@"Invalid value '%@' for property '%@'", obj, prop.name);
+    id value = [[cls alloc] init];
+    RLMInitializeWithValue(value, obj, schema);
+    return value;
 }
 
-- (instancetype)initWithValue:(id)value schema:(RLMSchema *)schema {
-    if (!(self = [super init])) {
-        return self;
+static id validatedObjectForProperty(__unsafe_unretained id const obj,
+                                     __unsafe_unretained RLMObjectSchema *const objectSchema,
+                                     __unsafe_unretained RLMProperty *const prop,
+                                     __unsafe_unretained RLMSchema *const schema) {
+    RLMValidateValueForProperty(obj, objectSchema, prop);
+    if (!obj || obj == NSNull.null) {
+        return nil;
     }
-
-    if (!RLMInitializedObjectSchema(self)) {
-        // Don't populate fields from the passed-in object if we're called
-        // during schema init
-        return self;
-    }
-
-    NSArray *properties = _objectSchema.properties;
-    if (NSArray *array = RLMDynamicCast<NSArray>(value)) {
-        if (array.count != properties.count) {
-            @throw RLMException(@"Invalid array input. Number of array elements does not match number of properties.");
+    if (prop.type == RLMPropertyTypeObject) {
+        Class objectClass = schema[prop.objectClassName].objectClass;
+        if (prop.dictionary) {
+            NSMutableDictionary *ret = [[NSMutableDictionary alloc] init];
+            for (id key in obj) {
+                id val = coerceToObjectType(obj[key], objectClass, schema);
+                [ret setObject:val forKey:key];
+            }
+            return ret;
         }
-        for (NSUInteger i = 0; i < array.count; i++) {
-            id propertyValue = RLMValidatedObjectForProperty(array[i], properties[i], schema);
-            [self setValue:RLMCoerceToNil(propertyValue) forKeyPath:[properties[i] name]];
+        else if (prop.collection) {
+            NSMutableArray *ret = [[NSMutableArray alloc] init];
+            for (id el in obj) {
+                [ret addObject:coerceToObjectType(el, objectClass, schema)];
+            }
+            return ret;
+        }
+        return coerceToObjectType(obj, objectClass, schema);
+    }
+    else if (prop.type == RLMPropertyTypeDecimal128 && !prop.collection) {
+        return [[RLMDecimal128 alloc] initWithValue:obj];
+    }
+    return obj;
+}
+
+void RLMInitializeWithValue(RLMObjectBase *self, id value, RLMSchema *schema) {
+    if (!value || value == NSNull.null) {
+        @throw RLMException(@"Must provide a non-nil value.");
+    }
+
+    RLMObjectSchema *objectSchema = self->_objectSchema;
+    if (!objectSchema) {
+        // Will be nil if we're called during schema init, when we don't want
+        // to actually populate the object anyway
+        return;
+    }
+
+    NSArray *properties = objectSchema.properties;
+    if (NSArray *array = RLMDynamicCast<NSArray>(value)) {
+        if (array.count > properties.count) {
+            @throw RLMException(@"Invalid array input: more values (%llu) than properties (%llu).",
+                                (unsigned long long)array.count, (unsigned long long)properties.count);
+        }
+        NSUInteger i = 0;
+        for (id val in array) {
+            RLMProperty *prop = properties[i++];
+            [self setValue:validatedObjectForProperty(RLMCoerceToNil(val), objectSchema, prop, schema)
+                    forKey:prop.name];
         }
     }
     else {
         // assume our object is an NSDictionary or an object with kvc properties
-        NSDictionary *defaultValues = nil;
         for (RLMProperty *prop in properties) {
-            id obj = RLMValidatedValueForProperty(value, prop.name, _objectSchema.className);
+            id obj = RLMValidatedValueForProperty(value, prop.name, objectSchema.className);
 
-            // get default for nil object
+            // don't set unspecified properties
             if (!obj) {
-                if (!defaultValues) {
-                    defaultValues = RLMDefaultValuesForObjectSchema(_objectSchema);
-                }
-                obj = defaultValues[prop.name];
+                continue;
             }
 
-            obj = RLMValidatedObjectForProperty(obj, prop, schema);
-            [self setValue:RLMCoerceToNil(obj) forKeyPath:prop.name];
+            [self setValue:validatedObjectForProperty(RLMCoerceToNil(obj), objectSchema, prop, schema)
+                    forKey:prop.name];
         }
     }
-
-    return self;
 }
 
-- (instancetype)initWithRealm:(__unsafe_unretained RLMRealm *const)realm
-                       schema:(__unsafe_unretained RLMObjectSchema *const)schema {
-    self = [super init];
-    if (self) {
-        _realm = realm;
-        _objectSchema = schema;
-    }
-    return self;
+id RLMCreateManagedAccessor(Class cls, RLMClassInfo *info) {
+    RLMObjectBase *obj = [[cls alloc] init];
+    obj->_info = info;
+    obj->_realm = info->realm;
+    obj->_objectSchema = info->rlmObjectSchema;
+    return obj;
 }
 
 - (id)valueForKey:(NSString *)key {
@@ -159,27 +192,28 @@ static id RLMValidatedObjectForProperty(id obj, RLMProperty *prop, RLMSchema *sc
 
 // Generic Swift properties can't be dynamic, so KVO doesn't work for them by default
 - (id)valueForUndefinedKey:(NSString *)key {
-    if (Ivar ivar = _objectSchema[key].swiftIvar) {
-        return RLMCoerceToNil(object_getIvar(self, ivar));
+    RLMProperty *prop = _objectSchema[key];
+    if (Class swiftAccessor = prop.swiftAccessor) {
+        return RLMCoerceToNil([swiftAccessor get:prop on:self]);
     }
     return [super valueForUndefinedKey:key];
 }
 
 - (void)setValue:(id)value forUndefinedKey:(NSString *)key {
+    value = RLMCoerceToNil(value);
     RLMProperty *property = _objectSchema[key];
-    if (Ivar ivar = property.swiftIvar) {
-        if (property.type == RLMPropertyTypeArray && [value conformsToProtocol:@protocol(NSFastEnumeration)]) {
-            RLMArray *array = [object_getIvar(self, ivar) _rlmArray];
-            [array removeAllObjects];
-            [array addObjects:value];
+    if (property.collection) {
+        if (id enumerable = RLMAsFastEnumeration(value)) {
+            value = validatedObjectForProperty(value, _objectSchema, property,
+                                               RLMSchema.partialPrivateSharedSchema);
         }
-        else if (property.optional) {
-            RLMOptionalBase *optional = object_getIvar(self, ivar);
-            optional.underlyingValue = value;
-        }
-        return;
     }
-    [super setValue:value forUndefinedKey:key];
+    if (auto swiftAccessor = property.swiftAccessor) {
+        [swiftAccessor set:property on:self to:value];
+    }
+    else {
+        [super setValue:value forUndefinedKey:key];
+    }
 }
 
 // overridden at runtime per-class for performance
@@ -196,12 +230,19 @@ static id RLMValidatedObjectForProperty(id obj, RLMProperty *prop, RLMSchema *sc
     return [RLMSchema sharedSchemaForClass:self.class];
 }
 
-+ (Class)objectUtilClass:(BOOL)isSwift {
-    return RLMObjectUtilClass(isSwift);
++ (void)initializeLinkedObjectSchemas {
+    for (RLMProperty *prop in self.sharedSchema.properties) {
+        if (prop.type == RLMPropertyTypeObject && !RLMSchema.partialPrivateSharedSchema[prop.objectClassName]) {
+            [[RLMSchema classForString:prop.objectClassName] initializeLinkedObjectSchemas];
+        }
+    }
 }
 
-- (NSString *)description
-{
++ (nullable NSArray<RLMProperty *> *)_getProperties {
+    return nil;
+}
+
+- (NSString *)description {
     if (self.isInvalidated) {
         return @"[invalid object]";
     }
@@ -218,7 +259,7 @@ static id RLMValidatedObjectForProperty(id obj, RLMProperty *prop, RLMSchema *sc
     NSMutableString *mString = [NSMutableString stringWithFormat:@"%@ {\n", baseClassName];
 
     for (RLMProperty *property in _objectSchema.properties) {
-        id object = RLMObjectBaseObjectForKeyedSubscript(self, property.name);
+        id object = [(id)self objectForKeyedSubscript:property.name];
         NSString *sub;
         if ([object respondsToSelector:@selector(descriptionWithMaxDepth:)]) {
             sub = [object descriptionWithMaxDepth:depth - 1];
@@ -253,12 +294,12 @@ static id RLMValidatedObjectForProperty(id obj, RLMProperty *prop, RLMSchema *sc
 
 - (BOOL)isInvalidated {
     // if not unmanaged and our accessor has been detached, we have been deleted
-    return self.class == _objectSchema.accessorClass && !_row.is_attached();
+    return _info && !_row.is_valid();
 }
 
 - (BOOL)isEqual:(id)object {
     if (RLMObjectBase *other = RLMDynamicCast<RLMObjectBase>(object)) {
-        if (_objectSchema.primaryKeyProperty) {
+        if (_objectSchema.primaryKeyProperty || _realm.isFrozen) {
             return RLMObjectBaseAreEqual(self, other);
         }
     }
@@ -267,18 +308,48 @@ static id RLMValidatedObjectForProperty(id obj, RLMProperty *prop, RLMSchema *sc
 
 - (NSUInteger)hash {
     if (_objectSchema.primaryKeyProperty) {
+        // If we have a primary key property, that's an immutable value which we
+        // can use as the identity of the object.
         id primaryProperty = [self valueForKey:_objectSchema.primaryKeyProperty.name];
 
         // modify the hash of our primary key value to avoid potential (although unlikely) collisions
         return [primaryProperty hash] ^ 1;
     }
+    else if (_realm.isFrozen) {
+        // The object key can never change for frozen objects, so that's usable
+        // for objects without primary keys
+        return static_cast<NSUInteger>(_row.get_key().value);
+    }
     else {
+        // Non-frozen objects without primary keys don't have any immutable
+        // concept of identity that we can hash so we have to fall back to
+        // pointer equality
         return [super hash];
     }
 }
 
 + (BOOL)shouldIncludeInDefaultSchema {
     return RLMIsObjectSubclass(self);
+}
+
++ (NSString *)primaryKey {
+    return nil;
+}
+
++ (NSString *)_realmObjectName {
+    return nil;
+}
+
++ (NSDictionary *)_realmColumnNames {
+    return nil;
+}
+
++ (bool)_realmIgnoreClass {
+    return false;
+}
+
++ (bool)isEmbedded {
+    return false;
 }
 
 - (id)mutableArrayValueForKey:(NSString *)key {
@@ -289,6 +360,14 @@ static id RLMValidatedObjectForProperty(id obj, RLMProperty *prop, RLMSchema *sc
     return [super mutableArrayValueForKey:key];
 }
 
+- (id)mutableSetValueForKey:(NSString *)key {
+    id obj = [self valueForKey:key];
+    if ([obj isKindOfClass:[RLMSet class]]) {
+        return obj;
+    }
+    return [super mutableSetValueForKey:key];
+}
+
 - (void)addObserver:(id)observer
          forKeyPath:(NSString *)keyPath
             options:(NSKeyValueObservingOptions)options
@@ -296,7 +375,7 @@ static id RLMValidatedObjectForProperty(id obj, RLMProperty *prop, RLMSchema *sc
     if (!_observationInfo) {
         _observationInfo = new RLMObservationInfo(self);
     }
-    _observationInfo->recordObserver(_row, _objectSchema, keyPath);
+    _observationInfo->recordObserver(_row, _info, _objectSchema, keyPath);
 
     [super addObserver:observer forKeyPath:keyPath options:options context:context];
 }
@@ -308,33 +387,46 @@ static id RLMValidatedObjectForProperty(id obj, RLMProperty *prop, RLMSchema *sc
 }
 
 + (BOOL)automaticallyNotifiesObserversForKey:(NSString *)key {
-    const char *className = class_getName(self);
-    const char accessorClassPrefix[] = "RLMAccessor_";
-    if (!strncmp(className, accessorClassPrefix, sizeof(accessorClassPrefix) - 1)) {
-        if (self.sharedSchema[key]) {
-            return NO;
-        }
+    RLMProperty *prop = [self.class sharedSchema][key];
+    if (isManagedAccessorClass(self)) {
+        // Managed accessors explicitly call willChange/didChange for managed
+        // properties, so we don't want KVO to override the setters to do that
+        return !prop;
+    }
+    if (prop.swiftAccessor) {
+        // Properties with swift accessors don't have obj-c getters/setters and
+        // will explode if KVO tries to override them
+        return NO;
     }
 
     return [super automaticallyNotifiesObserversForKey:key];
 }
 
-@end
+#pragma mark - Thread Confined Protocol Conformance
 
-void RLMObjectBaseSetRealm(__unsafe_unretained RLMObjectBase *object, __unsafe_unretained RLMRealm *realm) {
-    if (object) {
-        object->_realm = realm;
-    }
+- (realm::ThreadSafeReference)makeThreadSafeReference {
+    return Object(_realm->_realm, *_info->objectSchema, _row);
 }
+
+- (id)objectiveCMetadata {
+    return nil;
+}
+
++ (instancetype)objectWithThreadSafeReference:(realm::ThreadSafeReference)reference
+                                     metadata:(__unused id)metadata
+                                        realm:(RLMRealm *)realm {
+    Object object = reference.resolve<Object>(realm->_realm);
+    if (!object.is_valid()) {
+        return nil;
+    }
+    NSString *objectClassName = @(object.get_object_schema().name.c_str());
+    return RLMCreateObjectAccessor(realm->_info[objectClassName], object.obj());
+}
+
+@end
 
 RLMRealm *RLMObjectBaseRealm(__unsafe_unretained RLMObjectBase *object) {
     return object ? object->_realm : nil;
-}
-
-void RLMObjectBaseSetObjectSchema(__unsafe_unretained RLMObjectBase *object, __unsafe_unretained RLMObjectSchema *objectSchema) {
-    if (object) {
-        object->_objectSchema = objectSchema;
-    }
 }
 
 RLMObjectSchema *RLMObjectBaseObjectSchema(__unsafe_unretained RLMObjectBase *object) {
@@ -347,7 +439,7 @@ id RLMObjectBaseObjectForKeyedSubscript(RLMObjectBase *object, NSString *key) {
     }
 
     if (object->_realm) {
-        return RLMDynamicGet(object, RLMValidatedGetProperty(object, key));
+        return RLMDynamicGetByName(object, key);
     }
     else {
         return [object valueForKey:key];
@@ -359,7 +451,7 @@ void RLMObjectBaseSetObjectForKeyedSubscript(RLMObjectBase *object, NSString *ke
         return;
     }
 
-    if (object->_realm) {
+    if (object->_realm || object.class == object->_objectSchema.accessorClass) {
         RLMDynamicValidatedSet(object, key, obj);
     }
     else {
@@ -386,12 +478,48 @@ BOOL RLMObjectBaseAreEqual(RLMObjectBase *o1, RLMObjectBase *o2) {
         return NO;
     }
     // if either are detached
-    if (!o1->_row.is_attached() || !o2->_row.is_attached()) {
+    if (!o1->_row.is_valid() || !o2->_row.is_valid()) {
         return NO;
     }
     // if table and index are the same
     return o1->_row.get_table() == o2->_row.get_table()
-        && o1->_row.get_index() == o2->_row.get_index();
+        && o1->_row.get_key() == o2->_row.get_key();
+}
+
+static id resolveObject(RLMObjectBase *obj, RLMRealm *realm) {
+    RLMObjectBase *resolved = RLMCreateManagedAccessor(obj.class, &realm->_info[obj->_info->rlmObjectSchema.className]);
+    resolved->_row = realm->_realm->import_copy_of(obj->_row);
+    if (!resolved->_row.is_valid()) {
+        return nil;
+    }
+    RLMInitializeSwiftAccessor(resolved, false);
+    return resolved;
+}
+
+id RLMObjectFreeze(RLMObjectBase *obj) {
+    if (!obj->_realm && !obj.isInvalidated) {
+        @throw RLMException(@"Unmanaged objects cannot be frozen.");
+    }
+    RLMVerifyAttached(obj);
+    if (obj->_realm.frozen) {
+        return obj;
+    }
+    obj = resolveObject(obj, obj->_realm.freeze);
+    if (!obj) {
+        @throw RLMException(@"Cannot freeze an object in the same write transaction as it was created in.");
+    }
+    return obj;
+}
+
+id RLMObjectThaw(RLMObjectBase *obj) {
+    if (!obj->_realm && !obj.isInvalidated) {
+        @throw RLMException(@"Unmanaged objects cannot be frozen.");
+    }
+    RLMVerifyAttached(obj);
+    if (!obj->_realm.frozen) {
+        return obj;
+    }
+    return resolveObject(obj, obj->_realm.thaw);
 }
 
 id RLMValidatedValueForProperty(id object, NSString *key, NSString *className) {
@@ -407,53 +535,253 @@ id RLMValidatedValueForProperty(id object, NSString *key, NSString *className) {
     }
 }
 
-Class RLMObjectUtilClass(BOOL isSwift) {
-    static Class objectUtilObjc = [RLMObjectUtil class];
-    static Class objectUtilSwift = NSClassFromString(@"RealmSwiftObjectUtil");
-    return isSwift && objectUtilSwift ? objectUtilSwift : objectUtilObjc;
+#pragma mark - Notifications
+
+namespace {
+struct ObjectChangeCallbackWrapper {
+    RLMObjectNotificationCallback block;
+    RLMObjectBase *object;
+
+    NSArray<NSString *> *propertyNames = nil;
+    NSArray *oldValues = nil;
+    bool deleted = false;
+
+    void populateProperties(realm::CollectionChangeSet const& c) {
+        if (propertyNames) {
+            return;
+        }
+        if (!c.deletions.empty()) {
+            deleted = true;
+            return;
+        }
+        if (c.columns.empty()) {
+            return;
+        }
+
+        // FIXME: It's possible for the column key of a persisted property
+        // to equal the column key of a computed property.
+        auto properties = [NSMutableArray new];
+        for (RLMProperty *property in object->_info->rlmObjectSchema.properties) {
+            auto columnKey = object->_info->tableColumn(property).value;
+            if (c.columns.count(columnKey)) {
+                [properties addObject:property.name];
+            }
+        }
+        for (RLMProperty *property in object->_info->rlmObjectSchema.computedProperties) {
+            auto columnKey = object->_info->computedTableColumn(property).value;
+            if (c.columns.count(columnKey)) {
+                [properties addObject:property.name];
+            }
+        }
+        if (properties.count) {
+            propertyNames = properties;
+        }
+    }
+
+    NSArray *readValues(realm::CollectionChangeSet const& c) {
+        if (c.empty()) {
+            return nil;
+        }
+        populateProperties(c);
+        if (!propertyNames) {
+            return nil;
+        }
+
+        auto values = [NSMutableArray arrayWithCapacity:propertyNames.count];
+        for (NSString *name in propertyNames) {
+            id value = [object valueForKey:name];
+            if (!value || [value isKindOfClass:[RLMArray class]]) {
+                [values addObject:NSNull.null];
+            }
+            else {
+                [values addObject:value];
+            }
+        }
+        return values;
+    }
+
+    void before(realm::CollectionChangeSet const& c) {
+        @autoreleasepool {
+            oldValues = readValues(c);
+        }
+    }
+
+    void after(realm::CollectionChangeSet const& c) {
+        @autoreleasepool {
+            auto newValues = readValues(c);
+            if (deleted) {
+                block(nil, nil, nil, nil, nil);
+            }
+            else if (newValues) {
+                block(object, propertyNames, oldValues, newValues, nil);
+            }
+            propertyNames = nil;
+            oldValues = nil;
+        }
+    }
+
+    void error(std::exception_ptr err) {
+        @autoreleasepool {
+            try {
+                rethrow_exception(err);
+            }
+            catch (...) {
+                NSError *error = nil;
+                RLMRealmTranslateException(&error);
+                block(nil, nil, nil, nil, error);
+            }
+        }
+    }
+};
+} // anonymous namespace
+
+@interface RLMPropertyChange ()
+@property (nonatomic, readwrite, strong) NSString *name;
+@property (nonatomic, readwrite, strong, nullable) id previousValue;
+@property (nonatomic, readwrite, strong, nullable) id value;
+@end
+
+@implementation RLMPropertyChange
+- (NSString *)description {
+    return [NSString stringWithFormat:@"<RLMPropertyChange: %p> %@ %@ -> %@",
+            (__bridge void *)self, _name, _previousValue, _value];
+}
+@end
+
+@interface RLMObjectNotificationToken : RLMNotificationToken
+@end
+
+@implementation RLMObjectNotificationToken {
+    std::mutex _mutex;
+    __unsafe_unretained RLMRealm *_realm;
+    realm::Object _object;
+    realm::NotificationToken _token;
 }
 
-@implementation RLMObjectUtil
-
-+ (NSArray *)ignoredPropertiesForClass:(Class)cls {
-    return [cls ignoredProperties];
+- (RLMRealm *)realm {
+    return _realm;
 }
 
-+ (NSArray *)indexedPropertiesForClass:(Class)cls {
-    return [cls indexedProperties];
+- (void)suppressNextNotification {
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (_object.is_valid()) {
+        _token.suppress_next();
+    }
 }
 
-+ (NSDictionary *)linkingObjectsPropertiesForClass:(Class)cls {
-    return [cls linkingObjectsProperties];
+- (void)invalidate {
+    std::lock_guard<std::mutex> lock(_mutex);
+    _realm = nil;
+    _token = {};
+    _object = {};
 }
 
-+ (NSDictionary *)linkingObjectProperties:(__unused id)object {
-    return nil;
+- (void)addNotificationBlock:(RLMObjectNotificationCallback)block
+         threadSafeReference:(RLMThreadSafeReference *)tsr
+                      config:(RLMRealmConfiguration *)config
+                    keyPaths:(KeyPathArray)keyPaths
+                       queue:(dispatch_queue_t)queue {
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (!_realm) {
+        // Token was invalidated before we got this far
+        return;
+    }
+
+    NSError *error;
+    RLMRealm *realm = _realm = [RLMRealm realmWithConfiguration:config queue:queue error:&error];
+    if (!realm) {
+        block(nil, nil, nil, nil, error);
+        return;
+    }
+    RLMObjectBase *obj = [realm resolveThreadSafeReference:tsr];
+
+    _object = realm::Object(obj->_realm->_realm, *obj->_info->objectSchema, obj->_row);
+    _token = _object.add_notification_callback(ObjectChangeCallbackWrapper{block, obj}, std::move(keyPaths));
 }
 
-+ (NSArray *)getGenericListPropertyNames:(__unused id)obj {
-    return nil;
+- (void)addNotificationBlock:(RLMObjectNotificationCallback)block object:(RLMObjectBase *)obj keyPaths:(KeyPathArray)keyPaths {
+    _object = realm::Object(obj->_realm->_realm, *obj->_info->objectSchema, obj->_row);
+    _realm = obj->_realm;
+    _token = _object.add_notification_callback(ObjectChangeCallbackWrapper{block, obj}, std::move(keyPaths));
 }
 
-+ (NSDictionary *)getLinkingObjectsProperties:(__unused id)obj {
-    return nil;
+RLMNotificationToken *RLMObjectBaseAddNotificationBlock(RLMObjectBase *obj,
+                                                        NSArray<NSString *> *keyPaths,
+                                                        dispatch_queue_t queue,
+                                                        RLMObjectNotificationCallback block) {
+    if (!obj->_realm) {
+        @throw RLMException(@"Only objects which are managed by a Realm support change notifications");
+    }
+
+    KeyPathArray keyPathArray = RLMKeyPathArrayFromStringArray(obj.realm, obj->_info, keyPaths);
+
+    if (!queue) {
+        [obj->_realm verifyNotificationsAreSupported:true];
+        auto token = [[RLMObjectNotificationToken alloc] init];
+        token->_realm = obj->_realm;
+        [token addNotificationBlock:block object:obj keyPaths:std::move(keyPathArray)];
+        return token;
+    }
+
+    RLMThreadSafeReference *tsr = [RLMThreadSafeReference referenceWithThreadConfined:(id)obj];
+    auto token = [[RLMObjectNotificationToken alloc] init];
+    token->_realm = obj->_realm;
+    RLMRealmConfiguration *config = obj->_realm.configuration;
+    dispatch_async(queue, ^{
+        @autoreleasepool {
+            [token addNotificationBlock:block threadSafeReference:tsr config:config keyPaths:std::move(keyPathArray) queue:queue];
+        }
+    });
+    return token;
 }
 
-+ (void)initializeListProperty:(__unused RLMObjectBase *)object property:(__unused RLMProperty *)property array:(__unused RLMArray *)array {
+@end
+
+RLMNotificationToken *RLMObjectAddNotificationBlock(RLMObjectBase *obj, RLMObjectChangeBlock block, NSArray<NSString *> *keyPaths, dispatch_queue_t queue) {
+    return RLMObjectBaseAddNotificationBlock(obj, keyPaths, queue, ^(RLMObjectBase *, NSArray<NSString *> *propertyNames,
+                                                           NSArray *oldValues, NSArray *newValues, NSError *error) {
+        if (error) {
+            block(false, nil, error);
+        }
+        else if (!propertyNames) {
+            block(true, nil, nil);
+        }
+        else {
+            auto properties = [NSMutableArray arrayWithCapacity:propertyNames.count];
+            for (NSUInteger i = 0, count = propertyNames.count; i < count; ++i) {
+                auto prop = [RLMPropertyChange new];
+                prop.name = propertyNames[i];
+                prop.previousValue = RLMCoerceToNil(oldValues[i]);
+                prop.value = RLMCoerceToNil(newValues[i]);
+                [properties addObject:prop];
+            }
+            block(false, properties, nil);
+        }
+    });
 }
 
-+ (void)initializeOptionalProperty:(__unused RLMObjectBase *)object property:(__unused RLMProperty *)property {
+uint64_t RLMObjectBaseGetCombineId(__unsafe_unretained RLMObjectBase *const obj) {
+    if (obj.invalidated) {
+        RLMVerifyAttached(obj);
+    }
+    if (obj->_realm) {
+        return obj->_row.get_key().value;
+    }
+    return reinterpret_cast<uint64_t>((__bridge void *)obj);
 }
 
-+ (void)initializeLinkingObjectsProperty:(__unused RLMObjectBase *)object property:(__unused RLMProperty *)property {
+@implementation RealmSwiftObject
++ (BOOL)accessInstanceVariablesDirectly {
+    // By default KVO will try to directly read ivars if a thing with a matching
+    // name is observed and there's no objc property with that name. This
+    // crashes when it tries to read a property wrapper ivar, and is never
+    // useful for Swift classes.
+    return NO;
 }
+@end
 
-+ (NSDictionary *)getOptionalProperties:(__unused id)obj {
-    return nil;
+@implementation RealmSwiftEmbeddedObject
++ (BOOL)accessInstanceVariablesDirectly {
+    return NO;
 }
-
-+ (NSArray *)requiredPropertiesForClass:(Class)cls {
-    return [cls requiredProperties];
-}
-
 @end

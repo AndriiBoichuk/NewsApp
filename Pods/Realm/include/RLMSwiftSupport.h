@@ -17,6 +17,9 @@
 ////////////////////////////////////////////////////////////////////////////
 
 #import <Foundation/Foundation.h>
+#import <Realm/RLMCollection.h>
+
+NS_ASSUME_NONNULL_BEGIN
 
 @interface RLMSwiftSupport : NSObject
 
@@ -24,3 +27,5 @@
 + (NSString *)demangleClassName:(NSString *)className;
 
 @end
+
+NS_ASSUME_NONNULL_END

@@ -16,7 +16,6 @@
 //
 ////////////////////////////////////////////////////////////////////////////
 
-#import <Foundation/Foundation.h>
 #import <memory>
 #import <string>
 
@@ -27,16 +26,14 @@ namespace realm {
 }
 
 // Add a Realm to the weak cache
-void RLMCacheRealm(std::string const& path, RLMRealm *realm);
+void RLMCacheRealm(std::string const& path, void *key, RLMRealm *realm);
 // Get a Realm for the given path which can be used on the current thread
-RLMRealm *RLMGetThreadLocalCachedRealmForPath(std::string const& path);
+RLMRealm *RLMGetThreadLocalCachedRealmForPath(std::string const& path, void *key);
 // Get a Realm for the given path
 RLMRealm *RLMGetAnyCachedRealmForPath(std::string const& path);
 // Clear the weak cache of Realms
 void RLMClearRealmCache();
 
-// Install an uncaught exception handler that cancels write transactions
-// for all cached realms on the current thread
-void RLMInstallUncaughtExceptionHandler();
+RLMRealm *RLMGetFrozenRealmForSourceRealm(RLMRealm *realm);
 
 std::unique_ptr<realm::BindingContext> RLMCreateBindingContext(RLMRealm *realm);

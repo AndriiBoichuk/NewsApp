@@ -17,7 +17,10 @@ class MainViewController: UIViewController {
     private let searchController = UISearchController()
     private let favouriteButton = UIButton()
     private let tableView = UITableView()
+    private let refreshControl = UIRefreshControl()
     private let presenter: MainViewPresenter
+    private var isRefreshAnimated = false
+    private var lastSearchedWord = "Ukraine"
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -42,32 +45,17 @@ class MainViewController: UIViewController {
     }
     
     @objc func sortButtonTapped(_ sender: UIButton) {
-        let startTransform = sender.transform
-        UIView.animate(withDuration: 0.5, delay: 0, options: [ .autoreverse, .allowUserInteraction], animations: {
-            sender.transform = CGAffineTransform(scaleX: 1.2, y: 1.2)
-            }, completion: { finished in
-                sender.transform = startTransform
-        })
+        animateTap(sender)
         presenter.sortArticles()
-
     }
     
     @objc func filterButtonTapped(_ sender: UIButton) {
-        let startTransform = sender.transform
-        UIView.animate(withDuration: 0.5, delay: 0, options: [ .autoreverse, .allowUserInteraction], animations: {
-            sender.transform = CGAffineTransform(scaleX: 1.2, y: 1.2)
-            }, completion: { finished in
-                sender.transform = startTransform
-        })
+        animateTap(sender)
     }
     
     @objc func favouriteButtonTapped(_ sender: UIButton) {
-        let startTransform = sender.transform
-        UIView.animate(withDuration: 0.5, delay: 0, options: [ .autoreverse, .allowUserInteraction], animations: {
-            sender.transform = CGAffineTransform(scaleX: 1.2, y: 1.2)
-            }, completion: { finished in
-                sender.transform = startTransform
-        })
+        let vc = ArticlesViewController(presenter: ArticlesViewPresenter(dbManager: presenter.getDBManager()))
+        navigationController?.pushViewController(vc, animated: true)
     }
     
     @objc func addArticleToFavourite(_ sender: UIButton) {
@@ -81,7 +69,19 @@ class MainViewController: UIViewController {
                 sender.setImage(UIImage(systemName: "seal"), for: .normal)
             }, completion: nil)
         }
-
+        let index = sender.tag
+        print(Thread.current)
+        let article = presenter.getArticle(at: index)
+        presenter.addArticle(article.toArticleSave())
+    }
+    
+    private func animateTap(_ button: UIButton) {
+        let startTransform = button.transform
+        UIView.animate(withDuration: 0.5, delay: 0, options: [ .autoreverse, .allowUserInteraction], animations: {
+            button.transform = CGAffineTransform(scaleX: 1.2, y: 1.2)
+            }, completion: { finished in
+                button.transform = startTransform
+        })
     }
     
     func initNavBar() {
@@ -111,6 +111,11 @@ class MainViewController: UIViewController {
         navigationItem.leftBarButtonItem = UIBarButtonItem(customView: favouriteButton)
     }
     
+    @objc private func getArticles(_ sender: Any) {
+        isRefreshAnimated = true
+        presenter.getNews(at: lastSearchedWord)
+    }
+    
     func initTableView() {
         view.addSubview(tableView)
         tableView.snp.makeConstraints { make in
@@ -120,7 +125,13 @@ class MainViewController: UIViewController {
         tableView.register(cell, forCellReuseIdentifier: "CustomCell")
         tableView.dataSource = self
         tableView.delegate = self
-
+        
+        if #available(iOS 10.0, *) {
+            tableView.refreshControl = refreshControl
+        } else {
+            tableView.addSubview(refreshControl)
+        }
+        refreshControl.addTarget(self, action: #selector(getArticles(_:)), for: .valueChanged)
     }
 }
 
@@ -141,6 +152,8 @@ extension MainViewController: UISearchBarDelegate {
 
     func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
         if let text = searchBar.text {
+            lastSearchedWord = text
+            print(Thread.current)
             presenter.getNews(at: text)
         }
     }
@@ -179,7 +192,6 @@ extension MainViewController: UITableViewDataSource, UITableViewDelegate {
         }
         cell.favouriteButton.addTarget(self, action: #selector(addArticleToFavourite), for: .touchUpInside)
         cell.favouriteButton.tag = indexPath.row
-        cell.delegate = self
         return cell
     }
     
@@ -193,22 +205,16 @@ extension MainViewController: UITableViewDataSource, UITableViewDelegate {
     
 }
 
-// MARK: - Custom Cell Delegate
-
-extension MainViewController: CustomCellDelegate {
-
-    func addArticleTapped() {
-        tableView.reloadData()
-    }
-
-}
-
 // MARK: - Delegate for updating tableview
 
-extension MainViewController: MainVCDelegate {
+extension MainViewController: UpdatingDelegate {
     
     func updateTableView() {
         tableView.reloadData()
+        if isRefreshAnimated {
+            self.refreshControl.endRefreshing()
+            isRefreshAnimated = false
+        }
     }
     
 }

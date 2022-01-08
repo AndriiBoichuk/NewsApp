@@ -18,52 +18,28 @@
 
 #import <Foundation/Foundation.h>
 
+#import <Realm/RLMConstants.h>
+#import <Realm/RLMThreadSafeReference.h>
+
 NS_ASSUME_NONNULL_BEGIN
 
-@class RLMRealm, RLMResults, RLMObject, RLMSortDescriptor, RLMNotificationToken, RLMCollectionChange;
+@class RLMRealm, RLMResults, RLMSortDescriptor, RLMNotificationToken, RLMCollectionChange;
+typedef RLM_CLOSED_ENUM(int32_t, RLMPropertyType);
 
 /**
- A homogenous collection of `RLMObject` instances. Examples of conforming types include `RLMArray`,
- `RLMResults`, and `RLMLinkingObjects`.
+ A homogenous collection of Realm-managed objects. Examples of conforming types
+ include `RLMArray`, `RLMSet`, `RLMResults`, and `RLMLinkingObjects`.
  */
-@protocol RLMCollection <NSFastEnumeration>
+@protocol RLMCollection <NSFastEnumeration, RLMThreadConfined>
 
-@required
-
-#pragma mark - Properties
-
-/**
- The number of objects in the collection.
- */
-@property (nonatomic, readonly, assign) NSUInteger count;
-
-/**
- The class name (i.e. type) of the `RLMObject`s contained in the collection.
- */
-@property (nonatomic, readonly, copy) NSString *objectClassName;
-
-/**
- The Realm which manages the collection, or `nil` for unmanaged collections.
- */
-@property (nonatomic, readonly) RLMRealm *realm;
-
-#pragma mark - Accessing Objects from a Collection
-
-/**
- Returns the object at the index specified.
-
- @param index   The index to look up.
-
- @return An `RLMObject` of the type contained in the collection.
- */
-- (id)objectAtIndex:(NSUInteger)index;
+@optional
 
 /**
  Returns the first object in the collection.
 
  Returns `nil` if called on an empty collection.
 
- @return An `RLMObject` of the type contained in the collection.
+ @return An object of the type contained in the collection.
  */
 - (nullable id)firstObject;
 
@@ -72,11 +48,22 @@ NS_ASSUME_NONNULL_BEGIN
 
  Returns `nil` if called on an empty collection.
 
- @return An `RLMObject` of the type contained in the collection.
+ @return An object of the type contained in the collection.
  */
 - (nullable id)lastObject;
 
-#pragma mark - Querying a Collection
+/// :nodoc:
+- (id)objectAtIndexedSubscript:(NSUInteger)index;
+
+/**
+ Returns an array containing the objects in the collection at the indexes specified by a given index set.
+ `nil` will be returned if the index set contains an index out of the collections bounds.
+
+ @param indexes The indexes in the collection to retrieve objects from.
+
+ @return The objects at the specified indexes.
+ */
+- (nullable NSArray *)objectsAtIndexes:(NSIndexSet *)indexes;
 
 /**
  Returns the index of an object in the collection.
@@ -85,7 +72,7 @@ NS_ASSUME_NONNULL_BEGIN
 
  @param object  An object (of the same type as returned from the `objectClassName` selector).
  */
-- (NSUInteger)indexOfObject:(RLMObject *)object;
+- (NSUInteger)indexOfObject:(id)object;
 
 /**
  Returns the index of the first object in the collection matching the predicate.
@@ -107,6 +94,50 @@ NS_ASSUME_NONNULL_BEGIN
  @return    The index of the object, or `NSNotFound` if the object is not found in the collection.
  */
 - (NSUInteger)indexOfObjectWithPredicate:(NSPredicate *)predicate;
+
+@required
+
+#pragma mark - Properties
+
+/**
+ The number of objects in the collection.
+ */
+@property (nonatomic, readonly, assign) NSUInteger count;
+
+/**
+ The type of the objects in the collection.
+ */
+@property (nonatomic, readonly, assign) RLMPropertyType type;
+
+/**
+ Indicates whether the objects in the collection can be `nil`.
+ */
+@property (nonatomic, readonly, getter = isOptional) BOOL optional;
+
+/**
+ The class name  of the objects contained in the collection.
+
+ Will be `nil` if `type` is not RLMPropertyTypeObject.
+ */
+@property (nonatomic, readonly, copy, nullable) NSString *objectClassName;
+
+/**
+ The Realm which manages the collection, or `nil` for unmanaged collections.
+ */
+@property (nonatomic, readonly) RLMRealm *realm;
+
+#pragma mark - Accessing Objects from a Collection
+
+/**
+ Returns the object at the index specified.
+
+ @param index   The index to look up.
+
+ @return An object of the type contained in the collection.
+ */
+- (id)objectAtIndex:(NSUInteger)index;
+
+#pragma mark - Querying a Collection
 
 /**
  Returns all objects matching the given predicate in the collection.
@@ -132,12 +163,12 @@ NS_ASSUME_NONNULL_BEGIN
 /**
  Returns a sorted `RLMResults` from the collection.
 
- @param property    The property name to sort by.
+ @param keyPath     The keyPath to sort by.
  @param ascending   The direction to sort in.
 
- @return    An `RLMResults` sorted by the specified property.
+ @return    An `RLMResults` sorted by the specified key path.
  */
-- (RLMResults *)sortedResultsUsingProperty:(NSString *)property ascending:(BOOL)ascending;
+- (RLMResults *)sortedResultsUsingKeyPath:(NSString *)keyPath ascending:(BOOL)ascending;
 
 /**
  Returns a sorted `RLMResults` from the collection.
@@ -147,9 +178,6 @@ NS_ASSUME_NONNULL_BEGIN
  @return    An `RLMResults` sorted by the specified properties.
  */
 - (RLMResults *)sortedResultsUsingDescriptors:(NSArray<RLMSortDescriptor *> *)properties;
-
-/// :nodoc:
-- (id)objectAtIndexedSubscript:(NSUInteger)index;
 
 /**
  Returns an `NSArray` containing the results of invoking `valueForKey:` using `key` on each of the collection's objects.
@@ -221,7 +249,7 @@ NS_ASSUME_NONNULL_BEGIN
      // end of run loop execution context
 
  You must retain the returned token for as long as you want updates to continue
- to be sent to the block. To stop receiving updates, call `-stop` on the token.
+ to be sent to the block. To stop receiving updates, call `-invalidate` on the token.
 
  @warning This method cannot be called during a write transaction, or when the
           containing Realm is read-only.
@@ -233,6 +261,93 @@ NS_ASSUME_NONNULL_BEGIN
                                                          RLMCollectionChange *__nullable change,
                                                          NSError *__nullable error))block __attribute__((warn_unused_result));
 
+#pragma mark - Aggregating Property Values
+
+/**
+ Returns the minimum (lowest) value of the given property among all the objects
+ in the collection.
+
+     NSNumber *min = [results minOfProperty:@"age"];
+
+ @warning You cannot use this method on `RLMObject`, `RLMArray`, and `NSData` properties.
+
+ @param property The property whose minimum value is desired. Only properties of
+                 types `int`, `float`, `double`, and `NSDate` are supported.
+
+ @return The minimum value of the property, or `nil` if the Results are empty.
+ */
+- (nullable id)minOfProperty:(NSString *)property;
+
+/**
+ Returns the maximum (highest) value of the given property among all the objects
+ in the collection.
+
+     NSNumber *max = [results maxOfProperty:@"age"];
+
+ @warning You cannot use this method on `RLMObject`, `RLMArray`, and `NSData` properties.
+
+ @param property The property whose maximum value is desired. Only properties of
+                 types `int`, `float`, `double`, and `NSDate` are supported.
+
+ @return The maximum value of the property, or `nil` if the Results are empty.
+ */
+- (nullable id)maxOfProperty:(NSString *)property;
+
+/**
+ Returns the sum of the values of a given property over all the objects in the collection.
+
+     NSNumber *sum = [results sumOfProperty:@"age"];
+
+ @warning You cannot use this method on `RLMObject`, `RLMArray`, and `NSData` properties.
+
+ @param property The property whose values should be summed. Only properties of
+                 types `int`, `float`, and `double` are supported.
+
+ @return The sum of the given property.
+ */
+- (NSNumber *)sumOfProperty:(NSString *)property;
+
+/**
+ Returns the average value of a given property over the objects in the collection.
+
+     NSNumber *average = [results averageOfProperty:@"age"];
+
+ @warning You cannot use this method on `RLMObject`, `RLMArray`, and `NSData` properties.
+
+ @param property The property whose average value should be calculated. Only
+                 properties of types `int`, `float`, and `double` are supported.
+
+ @return    The average value of the given property, or `nil` if the Results are empty.
+ */
+- (nullable NSNumber *)averageOfProperty:(NSString *)property;
+
+#pragma mark - Freeze
+
+/**
+ Indicates if the collection is frozen.
+
+ Frozen collections are immutable and can be accessed from any thread. The
+ objects read from a frozen collection will also be frozen.
+ */
+@property (nonatomic, readonly, getter=isFrozen) BOOL frozen;
+
+/**
+ Returns a frozen (immutable) snapshot of this collection.
+
+ The frozen copy is an immutable collection which contains the same data as
+ this collection currently contains, but will not update when writes are made
+ to the containing Realm. Unlike live collections, frozen collections can be
+ accessed from any thread.
+
+ @warning This method cannot be called during a write transaction, or when the containing Realm is read-only.
+ @warning Holding onto a frozen collection for an extended period while
+          performing write transaction on the Realm may result in the Realm
+          file growing to large sizes. See
+          `RLMRealmConfiguration.maximumNumberOfActiveVersions`
+          for more information.
+ */
+- (instancetype)freeze;
+
 @end
 
 /**
@@ -240,7 +355,7 @@ NS_ASSUME_NONNULL_BEGIN
  `sortedResultsUsingDescriptors:`. It is similar to `NSSortDescriptor`, but supports
  only the subset of functionality which can be efficiently run by Realm's query
  engine.
- 
+
  `RLMSortDescriptor` instances are immutable.
  */
 @interface RLMSortDescriptor : NSObject
@@ -248,9 +363,9 @@ NS_ASSUME_NONNULL_BEGIN
 #pragma mark - Properties
 
 /**
- The name of the property which the sort descriptor orders results by.
+ The key path which the sort descriptor orders results by.
  */
-@property (nonatomic, readonly) NSString *property;
+@property (nonatomic, readonly) NSString *keyPath;
 
 /**
  Whether the descriptor sorts in ascending or descending order.
@@ -260,9 +375,9 @@ NS_ASSUME_NONNULL_BEGIN
 #pragma mark - Methods
 
 /**
- Returns a new sort descriptor for the given property name and sort direction.
+ Returns a new sort descriptor for the given key path and sort direction.
  */
-+ (instancetype)sortDescriptorWithProperty:(NSString *)propertyName ascending:(BOOL)ascending;
++ (instancetype)sortDescriptorWithKeyPath:(NSString *)keyPath ascending:(BOOL)ascending;
 
 /**
  Returns a copy of the receiver with the sort direction reversed.
@@ -302,11 +417,11 @@ NS_ASSUME_NONNULL_BEGIN
 
 /**
  The indices in the new version of the collection which were modified.
- 
+
  For `RLMResults`, this means that one or more of the properties of the object at
  that index were modified (or an object linked to by that object was
  modified).
- 
+
  For `RLMArray`, the array itself being modified to contain a
  different object at that index will also be reported as a modification.
  */
