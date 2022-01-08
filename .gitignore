@@ -108,6 +108,3 @@ Temporary Items
 
 # vim
 *.swp
-git rm --cached Pods/Realm/core/realm-monorepo.xcframework/watchos-arm64_i386_x86_64-simulator/librealm-monorepo.a
-
-echo 'Pods/Realm/core/realm-monorepo.xcframework/watchos-arm64_i386_x86_64-simulator/librealm-monorepo.a'
